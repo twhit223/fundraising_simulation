@@ -1,18 +1,56 @@
-from definitions import FUNDRAISING_MAP, PRE_SEED_VALUE, SEED_VALUE, FUNDING_HISTORY_INITIALIZER, CAP_TABLE_INITIALIZER
+from definitions import FUNDRAISING_MAP, PRE_SEED_VALUE, SEED_VALUE, FUNDING_HISTORY_INITIALIZER, CAP_TABLE_INITIALIZER, STARTUP_STATES
 import pandas as pd
+import numpy as np
+import random
 
 # Thie Startup class contains the primary object that will be passed through the simulation. It contains all relevant information regarding the startup, and will be updated as the startup progresses through time.
 class Startup:
   def __init__(self, control_pref, quality):
+
+    # Check that the supplied parameters are valid
+    if control_preference > 1 or control_preference < 0:
+      raise Exception('The control preference must be between 0 and 1. The control preference supplied was: {}'.format(control_pref))
+    if quality > 1 or quality < 0:
+      raise Exception('The quality must be between 0 and 1. The quality supplied was: {}'.format(quality))
+
+    # Assign the initial startup properties
     self.control_pref = control_pref
     self.quality = quality
+    self.state = STARTUP_STATES[0]
     self.age = 0
-    self.value = 0  # UPDATE!!!. Should be some normalized random distribution based on quality. 
+    self.value = self.initialize_value()
     self.amt_raised = 0.0
     self.round = 0
     self.cap_table = CAP_TABLE_INITIALIZER
     self.funding_history = FUNDING_HISTORY_INITIALIZER
-    self.growth_rate = 0.0 # UPDATE!!!. Should be some function of quality. 
+    self.growth_rate = self.initialize_growth_rate()
+    self.transition_matrix = {'start': [0,1,0,0,0,0,0,0,0,0], 'grow': [0,0,self.live_transition_prob,self.die_transition_prob,0,0,0,0,0,0], 'live': [0,self.grow_transition_prob,0,0,self.pitch_transition_prob,0,0,0,0,0], 'die': [0,0,0,1,0,0,0,0,0,0], 'pre_seed-succeed': [0,1,0,0,0,0,0,0,0,0], 'pre_seed-fail': [0,0,self.live_transition_prob,self.die_transition_prob,0,0,0,0,0,0], 'seed-succeed': [0,1,0,0,0,0,0,0,0,0], 'seed-fail': [0,0,self.live_transition_prob,self.die_transition_prob,0,0,0,0,0,0], 'series_a-succeed': [0,0,0,0,0,0,0,0,1,0], 'series_a-fail': [0,0,self.live_transition_prob,self.die_transition_prob,0,0,0,0,0,0]} 
+    self.path_history = []
+
+
+  # This function will generate an initial value based on the quality of the startup. 
+  def initialize_value(self):
+    # UPDATE!!! Should be some normalized random distribution based on quality. 
+    return self.quality
+
+  # This function will generate a growth rate based on the quality of the startup. 
+  def initialize_growth_rate(self):
+    # UPDATE!!! Should be some normalized random distribution based on quality. 
+    return (1.0 + self.quality/10)
+
+  def live_transition_prob(self):
+    # UPDATE!!! Should be a function based off of the age, value, and perhaps value/age
+    return 0.5
+
+  def die_transition_prob(self):
+    return 1 - self.live_transition_prob()
+
+  def grow_transition_prob(self):
+    #UPDATE!!! Should be a funtion based off of the control preference (and perhaps value/age)
+    return control_pref
+
+  def pitch_transition_prob(self):
+    return 1 - self.grow_transition_prob()
 
   def grow(self):
     # Update the value based on the current value and growth rate
@@ -29,11 +67,13 @@ class Startup:
     # Update the startup properties based on the pitch
     self.update_funding(pitch)
 
+    return pitch
+
   # This function selects the fundraising round to seek investment for based on the current value. It returns a value corresponding with the proper fundraising round Recall that the fundraising rounds are mapped in the FUNDRAISING_MAP dict.
   def get_fundraising_round(self):
-    if self.value < PRE_SEED_VALUE: # Set the pre_seed_value and the seed_value in DEFINITIONS
+    if self.value < PRE_SEED_VALUE and self.round < 1: # Set the pre_seed_value and the seed_value in DEFINITIONS
       return 1
-    elif self.value < SEED_VALUE:
+    elif self.value < SEED_VALUE and self.round < 2:
       return 2
     else
       return 3
@@ -53,11 +93,20 @@ class Startup:
     post_money = 0
     pct_sold = 0
 
-    # Do something to determine if the pitch is successful
-    ### UPDATE!!!
+    # Determine how much value to raise
+    ### UPDATE!!! For now, set the value to be raised to be 20% of current value. Later, add in noise and figure out how to base this off the round.
+    amt_raised = self.value * 0.2 
+    pre_money = self.value
+    post_money = self.value * 1.2
+    pct_sold = 0.2
 
-    # If the pitch is successful, determine how much is raised and at what value
-    ### UPDATE!!!
+
+    # Determine if the pitch is successful
+    ### UPDATE!!! For now, just set the probability to be based off the quality. Later, add in a variable that accounts for the value trying to be raised for the given round type
+    if random.random() < self.quality:
+      sucess = 1
+    else:
+      success = 0
 
     # Return the result
     pitch = pd.DataFrame.from_dict({FUNDRAISING_MAP[raise_round]: [success, raise_round,  pre_money, post_money, amt_raised, pct_sold]}, orient = 'index', columns = ['active','round','pre_money','post_money','amt_raised','pct_sold'])
@@ -96,8 +145,56 @@ class Startup:
     # Update the values based on the new post_money
     self.cap_table['value'] = self.cap_table['pct_owned'] * pitch['post_money'].values[0]
 
+  # This function moves the startup from the current state to the next state based on the transisition probabilities. It first calls any functions that are reqruired to be run in the current state. A
+  def advance(self):
+
+    if self.state == 'die' or self.state == 'series_a-succeed':
+      raise Exception('The advance() function was called on a startup that has already reached end state {}.'.format(self.state))
+    if self.state == 'grow':
+      self.grow()
+      self.age = self.age + 1
+      transition_probabilities = get_transition_probabilities(self.state)
+      new_state = np.random.choice(STARTUP_STATES, replace = True, transition_probabilities)
+      self.state = new_state
+    elif self.state == 'live':
+      # Figure out if the startup will pitch or grow
+      transition_probabilities = get_transition_probabilities(self.state)
+      temp_state = np.random.choice(STARTUP_STATES, replace = True, self.transition_matrix[self.state])
+      if temp_state != 'grow':
+        #Do the pitch and update the state
+        pitch = self.fundraise()
+        new_state = FUNDRAISING_MAP[pitch['raise_round']] + '-' + ('succeed' if pitch['active'] == 1 else 'fail')
+        self.state = new_state
+        # Add one to the age since the pitch has actually been completed and a check will be made for the series_a-success end condition
+        self.age = self.age + 1
+      else:
+        # Set the new state to grow. Note: We do not add one to the age here since the age will be updated after grow()
+        self.state = temp_state
+    else:
+      transition_probabilities = get_transition_probabilities(self.state)
+      new_state = np.random.choice(STARTUP_STATES, replace = True, transition_probabilities)
+      self.state = new_state
+
+    # Append the current state to the path of the startup
+    self.path_history.append(self.state)
+
+  # This is a helper function that retrieves the transition probabilites from the transition matrix, which stores both ints and functions. It calls the functions to generate the transition probabilities based on the current startup properties
+  def get_transition_probabilities(self, state):
     
-      
+    # Check that the state is valid
+    if state not in STARTUP_STATES:
+      raise Exception('The state passed in was invalid. The state supplied was: {}'.format(state))
+
+    # Get the values and run any functions
+    temp = self.transition_matrix[state]
+    probs = [x() if callable(x) else x for x in temp]
+
+    # Check that the probabilities sum to 1
+    if sum(probs) != 1:
+      raise Exception('The probablities for state {} do not sum to 1. The sum was: {}'.format(state, sum(probs)))
+
+    return probs 
+
 
 
 
