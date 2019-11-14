@@ -1,3 +1,4 @@
 icecream
 wat-py
 pandas
+matplotlib
